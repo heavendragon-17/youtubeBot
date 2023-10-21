@@ -4,6 +4,7 @@ from discord.ext import commands
 from discord import FFmpegPCMAudio
 from discord import app_commands
 import os
+import threading
 
 testServerID = 893822110185689149
 
@@ -14,7 +15,7 @@ class play_control(commands.Cog):
 
     async def sync_commands(self):
         print("Music.cogs loaded and ready")
-        await self.client.tree.sync(guild=discord.Object(id=testServerID))
+        await self.client.tree.sync()
 
     queues = {}
 
@@ -23,9 +24,9 @@ class play_control(commands.Cog):
             self.queues[guild_id] = []
         return self.queues[guild_id]
 
-    def add_to_queue(self, guild_id, source):
+    def add_to_queue(self, guild_id, song_name, loop=False):
         queue = self.get_queue(guild_id)
-        queue.append(source)
+        queue.append((song_name, loop))
 
     def remove_from_queue(self, guild_id):
         queue = self.get_queue(guild_id)
@@ -58,20 +59,33 @@ class play_control(commands.Cog):
             ydl.download([url])
             return song_name
 
+    def toggle_loop(self, guild_id):
+        queue = self.get_queue(guild_id)
+        if queue:
+            _, loop = queue[0]
+            queue[0] = (queue[0][0], not loop)
+            return not loop
+        return False
+    
     async def play_next(self, interaction):
         guild_id = interaction.guild.id
         voice = interaction.guild.voice_client
-        queues = self.get_queue(guild_id)
+        queue = self.get_queue(guild_id)
 
         # Remove the finished song from the queue
-        self.remove_from_queue(guild_id)
+        song_name, loop = self.remove_from_queue(guild_id)
         # check if the queue is empty
-        if not queues:
+        if not song_name:
             await interaction.response.send_message("Queue is empty. Leaving voice channel.")
             await voice.disconnect()
             return
+        if loop:
+            # add the song back to the queue
+            self.add_to_queue(guild_id, song_name, loop)
+        
+        #play the next song
         if interaction.guild.id in self.queues:
-            song_name = queues[0]
+            song_name, loop = queue[0]
             song_path = os.path.join('song', song_name + '.mp3')
             source = FFmpegPCMAudio(song_path)
             voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next(interaction)))
@@ -80,6 +94,17 @@ class play_control(commands.Cog):
         else:
             await interaction.response.send_message("Queue is empty. Leaving voice channel.")
             await voice.disconnect()
+
+    @app_commands.command(name="loop", description="Join the voice channel")
+    async def loop(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        guild_id = interaction.guild.id
+        looping = self.toggle_loop(guild_id)
+        if looping:
+            await interaction.followup.send("Now looping the current song.")
+        else:
+            await interaction.followup.send("Looping is turned off.")
 
     @app_commands.command(name="join", description="Join the voice channel")
     async def join(self, interaction: discord.Interaction):
@@ -187,5 +212,4 @@ class play_control(commands.Cog):
 
     
 async def setup(client):
-    await client.add_cog(play_control(client),
-                         guilds= [discord.Object(id=testServerID)])
+    await client.add_cog(play_control(client))
