@@ -42,6 +42,16 @@ class play_control(commands.Cog):
         queue = self.get_queue(guild_id)
         queue.insert(0, song_name)
 
+    def remove_list_from_url(url):
+        # Find the index of "&list" in the url
+        index = url.find("&list")
+
+        # If "&list" is found, return the part of the url before "&list"
+        if index != -1:
+            return url[:index]
+
+        # If "&list" is not found, return the original url
+        return url
     def download_audio(self, youtube_url):
         # Create a YouTube object
         yt = YouTube(youtube_url)
@@ -153,6 +163,14 @@ class play_control(commands.Cog):
         for i in range(0, len(all_files), 2000):
             await interaction.followup.send(all_files[i:i+2000])
 
+    @app_commands.command(name="loop_playlist", description="Join the voice channel")
+    async def loop_playlist(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.toggle_loop_playlist()
+        if True == self.loop_playlist:
+            await interaction.followup.send("Now looping the playlist.")
+        else:
+            await interaction.followup.send("Looping playlist is turned off.")
 
     @app_commands.command(name="loop", description="Join the voice channel")
     async def loop(self, interaction: discord.Interaction):
@@ -249,6 +267,8 @@ class play_control(commands.Cog):
             self.add_to_queue(interaction.guild.id, song_url)
             await interaction.followup.send('**Now playing:** {}'.format(song_url))
         else:
+            # Remove the "&list" part of the url if it exists
+            song_url = self.remove_list_from_url(song_url)
             #handle youtube url
             song_name = self.download_audio(song_url)
             # Get the full file path for the song in the 'song' folder
@@ -267,6 +287,13 @@ class play_control(commands.Cog):
     async def queue(self, interaction: discord.Interaction, song_url: str):
         # Defer the interaction response
         await interaction.response.defer()
+        if not song_url.startswith("https://"):
+            #handle local file
+            self.add_to_queue(interaction.guild.id, song_url)
+            await interaction.followup.send(f'Added to queue {song_url}')
+            return
+        # Remove the "&list" part of the url if it exists
+        song_url = self.remove_list_from_url(song_url)
         song_name = self.download_audio(song_url)
         self.add_to_queue(interaction.guild.id, song_name)
         # Send a follow-up message
