@@ -1,10 +1,11 @@
 import discord
-import yt_dlp
+from pytube import YouTube
+from moviepy.editor import AudioFileClip
 from discord.ext import commands
 from discord import FFmpegPCMAudio
 from discord import app_commands
 import os
-import threading
+
 
 testServerID = 893822110185689149
 
@@ -18,15 +19,18 @@ class play_control(commands.Cog):
         await self.client.tree.sync()
 
     queues = {}
+    loop_flag = False
+    loop_playlist = False
+    
 
     def get_queue(self, guild_id):
         if guild_id not in self.queues:
             self.queues[guild_id] = []
         return self.queues[guild_id]
 
-    def add_to_queue(self, guild_id, song_name, loop=False):
+    def add_to_queue(self, guild_id, song_name):
         queue = self.get_queue(guild_id)
-        queue.append((song_name, loop))
+        queue.append(song_name)
 
     def remove_from_queue(self, guild_id):
         queue = self.get_queue(guild_id)
@@ -34,77 +38,130 @@ class play_control(commands.Cog):
             return queue.pop(0)
         return None
 
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'outtmpl': 'song/%(title)s.%(ext)s',
-    }
-
-    def download_audio(self, url):
-        with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-            song_name = info_dict.get('title', 'Unknown Song')
-            song_path = os.path.join('song', song_name + '.mp3')
-            # Check if the file already exists
-            if os.path.exists(song_path):
-                print(f"The audio file '{song_path}' already exists.")
-                return song_name
-            #download the song
-            print(f"Downloading: {song_name}")
-            os.makedirs('song', exist_ok=True)
-            ydl.download([url])
-            return song_name
-
-    def toggle_loop(self, guild_id):
+    def add_to_queue_start(self, guild_id, song_name):
         queue = self.get_queue(guild_id)
-        if queue:
-            _, loop = queue[0]
-            queue[0] = (queue[0][0], not loop)
-            return not loop
+        queue.insert(0, song_name)
+
+    def download_audio(self, youtube_url):
+        # Create a YouTube object
+        yt = YouTube(youtube_url)
+
+        # Get the title of the video
+        title = yt.title
+
+        # Get the highest quality audio stream
+        audio_stream = yt.streams.get_audio_only()
+
+        # Get the directory of the main.py script
+        main_script_dir = "C:\\Users\\Windows\\PycharmProjects\\youtubeBot"
+
+        # Create the output path
+        output_path = os.path.join(main_script_dir, 'song')
+
+        # Check if the directory exists
+        if not os.path.exists(output_path):
+            # If not, create it
+            os.makedirs(output_path)
+
+        # Check if a file with the same title already exists
+        mp3_filename = os.path.join(output_path, f'{title}.mp3')
+        if os.path.exists(mp3_filename):
+            print(f'A file with the title {title} already exists.')
+            return title
+
+        # Download the audio stream
+        filename = audio_stream.download(output_path=output_path)
+
+        # Convert mp4 audio to mp3
+        audioclip = AudioFileClip(filename)
+        audioclip.write_audiofile(mp3_filename)
+
+        # Delete the original .mp4 file
+        os.remove(filename)
+
+        return title
+
+    def toggle_loop(self):
+        
+        if False == self.loop_flag:
+            self.loop_flag = True
+            self.loop_playlist = False
+            print("Looping is turned on.")
+            return True
+        else:
+            self.loop_flag = False
+            print("Looping is turned off.")
         return False
-    
-    async def play_next(self, interaction):
+
+    def toggle_loop_playlist(self):
+        if False == self.loop_playlist:
+            self.loop_playlist = True
+            self.loop_flag = False
+            print("Looping playlist is turned on.")
+            return True
+        else:
+            self.loop_playlist = False
+            print("Looping playlist is turned off.")
+        return False
+
+    async def play_next(self, interaction: discord.Interaction):
         guild_id = interaction.guild.id
         voice = interaction.guild.voice_client
         queue = self.get_queue(guild_id)
 
         # Remove the finished song from the queue
-        song_name, loop = self.remove_from_queue(guild_id)
+        song_name = self.remove_from_queue(guild_id)
         # check if the queue is empty
-        if not song_name:
-            await interaction.response.send_message("Queue is empty. Leaving voice channel.")
+        if not 0 == len(queue):
+            await interaction.followup.send("Queue is empty. Leaving voice channel.")
             await voice.disconnect()
             return
-        if loop:
+        if True == self.loop_playlist:
             # add the song back to the queue
-            self.add_to_queue(guild_id, song_name, loop)
-        
+            self.add_to_queue(guild_id, song_name)
+
+        if True == self.loop_flag:
+            # add the song back to the queue
+            self.add_to_queue_start(guild_id, song_name)
+
         #play the next song
         if interaction.guild.id in self.queues:
-            song_name, loop = queue[0]
+            song_name = queue[0]
             song_path = os.path.join('song', song_name + '.mp3')
             source = FFmpegPCMAudio(song_path)
             voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next(interaction)))
-            await interaction.response.send_message(f"Now playing: {song_name}")
+            await interaction.followup.send(f"Now playing: {queue[0]}")
 
         else:
-            await interaction.response.send_message("Queue is empty. Leaving voice channel.")
+            await interaction.followup.send("Queue is empty. Leaving voice channel.")
             await voice.disconnect()
+
+    @app_commands.command(name="list", description="List all downloaded songs")
+    async def list(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        directory = 'C:\\Users\\Windows\\PycharmProjects\\youtubeBot\\song'
+
+        # Get all file names in the directory
+        files = os.listdir(directory)
+
+       # Remove the ".mp3" extension from each file name
+        files_without_extension = [file.replace('.mp3', '') for file in files]
+
+        # Join all file names with a newline character
+        all_files = 'List of all downloaded songs:\n' + '\n'.join(files_without_extension)
+        # Send the file names in chunks of 2000 characters or less
+        for i in range(0, len(all_files), 2000):
+            await interaction.followup.send(all_files[i:i+2000])
+
 
     @app_commands.command(name="loop", description="Join the voice channel")
     async def loop(self, interaction: discord.Interaction):
         await interaction.response.defer()
-
-        guild_id = interaction.guild.id
-        looping = self.toggle_loop(guild_id)
-        if looping:
+        self.toggle_loop()
+        if True == self.loop_flag:
             await interaction.followup.send("Now looping the current song.")
         else:
-            await interaction.followup.send("Looping is turned off.")
+            await interaction.followup.send("Looping is turned off.")   
 
     @app_commands.command(name="join", description="Join the voice channel")
     async def join(self, interaction: discord.Interaction):
@@ -123,8 +180,9 @@ class play_control(commands.Cog):
     async def leave(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
-        if(interaction.voice_client):
-            await interaction.guild.voice_client.disconnect()
+        voice = interaction.guild.voice_client
+        if voice is not None:
+            await voice.disconnect()
             await interaction.followup.send("I left the voice channel.")
         else:
             await interaction.followup.send("I'm not in a voice channel.")
@@ -164,7 +222,7 @@ class play_control(commands.Cog):
         else:
             await interaction.followup.send("No audio is playing or paused at the moment.")
 
-    
+
     @app_commands.command(name="play", description="PLay a song")
     async def play(self, interaction: discord.Interaction, song_url: str):
         await interaction.response.defer()
@@ -184,8 +242,11 @@ class play_control(commands.Cog):
         if not song_url.startswith("https://"):
             #handle local file
             voice = interaction.guild.voice_client
-            source = FFmpegPCMAudio(song_url + '.mp3')
+            song_path = os.path.join('song', song_url + '.mp3')
+            source = FFmpegPCMAudio(song_path)
             voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next(interaction)))
+            #add to queue
+            self.add_to_queue(interaction.guild.id, song_url)
             await interaction.followup.send('**Now playing:** {}'.format(song_url))
         else:
             #handle youtube url
@@ -196,11 +257,12 @@ class play_control(commands.Cog):
             try:
                 source = FFmpegPCMAudio(song_path)
                 voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next(interaction)))
+                # Add the song to the queue
                 self.add_to_queue(interaction.guild.id, song_name)
                 await interaction.followup.send('**Now playing:** {}'.format(song_name))
             except Exception as e:
                 await interaction.response.send_message(f"An error occurred while playing the audio: {e}")
-    
+
     @app_commands.command(name="queue", description="Add a song to the queue")
     async def queue(self, interaction: discord.Interaction, song_url: str):
         # Defer the interaction response
@@ -210,6 +272,6 @@ class play_control(commands.Cog):
         # Send a follow-up message
         await interaction.followup.send(f'Added to queue {song_name}')
 
-    
+
 async def setup(client):
     await client.add_cog(play_control(client))

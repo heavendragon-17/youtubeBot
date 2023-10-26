@@ -10,9 +10,6 @@ client = commands.Bot(command_prefix= '!', intents = intents)
 testServerID = 893822110185689149
 
 
-@client.tree.command(name="hi", description="My first application Command", guild=discord.Object(id=testServerID))
-async def first_command(interaction):
-    await interaction.response.send_message("Hello!")
 
 
 @client.event
