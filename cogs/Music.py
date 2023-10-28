@@ -364,6 +364,9 @@ class play_control(commands.Cog):
         await interaction.response.defer()
         voice = discord.utils.get(self.client.voice_clients, guild = interaction.guild)
         if voice and voice.is_playing():
+            self.loop_flag = False
+            self.loop_playlist_flag = False
+            self.loop_random_flag = False
             voice.stop()
         if interaction.guild.id in self.queues:
             self.queues[interaction.guild.id] = []
