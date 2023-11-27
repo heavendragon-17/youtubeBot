@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+guildId = 893822110185689149
+
 class Greetings(commands.Cog):
     def __init__(self, client):
         self.client = client

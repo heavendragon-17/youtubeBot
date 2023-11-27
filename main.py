@@ -7,14 +7,13 @@ intents = discord.Intents.all()
 
 client = commands.Bot(command_prefix= '!', intents = intents)
 
-testServerID = 893822110185689149
 
-
-
+MY_GUILD = discord.Object(id=893822110185689149)
 
 @client.event
 async def on_ready():
-    await client.tree.sync(guild=discord.Object(id=testServerID))
+    print('Bot ID: ', client.user.id)
+    await client.tree.sync(guild=MY_GUILD)
     initial_extensions = []
 
     for filename in os.listdir("./cogs"):

@@ -1,13 +1,16 @@
+from typing import Any
 import discord
 from pytube import YouTube
-from moviepy.editor import AudioFileClip
+from pytube import Search
 from discord.ext import commands
 from discord import FFmpegPCMAudio
 from discord import app_commands
 import os
 import random
-
-testServerID = 893822110185689149
+#import datetime
+from discord.utils import get
+from youtubesearchpython import VideosSearch
+MY_GUILD = discord.Object(id=893822110185689149)
 
 class play_control(commands.Cog):
     def __init__(self, client):
@@ -16,12 +19,16 @@ class play_control(commands.Cog):
 
     async def sync_commands(self):
         print("Music.cogs loaded and ready")
-        await self.client.tree.sync()
-
+        await self.client.tree.sync(guild = MY_GUILD)
+    
+    emoji_list = ['1️⃣', '2️⃣', '3️⃣', '4️⃣','5️⃣']
+    video_list = []
     queues = {}
     loop_flag = False
     loop_playlist_flag = False
     loop_random_flag = False
+    # Get the directory of the main.py script
+    main_script_dir = "C:\\Users\\Windows\\PycharmProjects\\youtubeBot"
 
     def get_queue(self, guild_id):
         if guild_id not in self.queues:
@@ -52,6 +59,7 @@ class play_control(commands.Cog):
 
         # If "&list" is not found, return the original url
         return url
+    
     def download_audio(self, youtube_url):
         # Create a YouTube object
         yt = YouTube(youtube_url)
@@ -62,11 +70,9 @@ class play_control(commands.Cog):
         # Get the highest quality audio stream
         audio_stream = yt.streams.get_audio_only()
 
-        # Get the directory of the main.py script
-        main_script_dir = "C:\\Users\\Windows\\PycharmProjects\\youtubeBot"
 
         # Create the output path
-        output_path = os.path.join(main_script_dir, 'song')
+        output_path = os.path.join(self.main_script_dir, 'songs')
 
         # Check if the directory exists
         if not os.path.exists(output_path):
@@ -83,11 +89,18 @@ class play_control(commands.Cog):
         filename = audio_stream.download(output_path=output_path)
 
         # Convert mp4 audio to mp3
-        audioclip = AudioFileClip(filename)
-        audioclip.write_audiofile(mp3_filename)
+        old_extension = '.mp4'  # Replace '.txt' with the current extension of your files
+        new_extension = '.mp3'
+        old_path = os.path.join(self.main_script_dir, filename)
+        new_name = os.path.splitext(filename)[0] + new_extension
+        new_path = os.path.join(self.main_script_dir, new_name)
+        os.rename(old_path, new_path)
 
-        # Delete the original .mp4 file
-        os.remove(filename)
+        #audioclip = AudioFileClip(filename)
+        #audioclip.write_audiofile(mp3_filename)
+
+        # Delete the original .mp3 file
+        #os.remove(filename)
 
         return title
 
@@ -117,6 +130,7 @@ class play_control(commands.Cog):
         return False
     
     def toggle_loop_random(self):
+
         if False == self.loop_random_flag:
             self.loop_random_flag = True
             self.loop_playlist_flag = False
@@ -128,10 +142,141 @@ class play_control(commands.Cog):
             print("Looping random is turned off.")
         return False
     
+    
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload):
+        for i in range(5):
+            if payload.emoji.name == self.emoji_list[i]:  # replace "your_emoji" with your emoji
+                channel = self.client.get_channel(payload.channel_id)
+                message = await channel.fetch_message(payload.message_id)
+                reaction = get(message.reactions, emoji=payload.emoji.name)
+                if reaction and reaction.count >= 2:
+                    await self.play_song_on_event(message, self.video_list[i])
+
+    async def play_next_on_event(self, message: discord.Message):
+        guild_id = message.guild.id
+        voice = message.guild.voice_client
+        queue = self.get_queue(guild_id)
+
+        # Remove the finished song from the queue
+        song_name = self.remove_from_queue(guild_id)
+
+        if True == self.loop_playlist_flag:
+            # add the song back to the queue
+            self.add_to_queue(guild_id, song_name)
+
+        if True == self.loop_flag:
+            # add the song back to the queue
+            self.add_to_queue_start(guild_id, song_name)
+
+        if True == self.loop_random_flag:
+            await self.play_random(message)
+            return
+        # check if the queue is emty
+        if 0 == len(queue):
+            await message.channel.send("Queue is empty")
+            return
+        
+        #play the next song
+        if message.guild.id in self.queues:
+            print(len(queue))
+            song_name = queue[0]
+            directory_path = os.path.join(self.main_script_dir, 'songs')
+            song_path = os.path.join(directory_path, song_name + '.mp3')
+            source = FFmpegPCMAudio(song_path)
+            voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next_on_event(message)))
+            await message.channel.send(f"**Now playing:** {queue[0]}")
+
+        else:
+            await message.channel.send("Queue is empty.")
+    
+    #handle and add to queue
+    async def handle_queue_on_event(self, message: discord.Message, song_input):
+        directory_path = os.path.join(self.main_script_dir, 'songs')
+        song_path = os.path.join(directory_path, song_input + '.mp3')
+        
+        # Remove the "&list" part of the url if it exists
+        song_input = self.remove_list_from_url(song_input)
+        song_name = self.download_audio(song_input)
+        self.add_to_queue(message.guild.id, song_name)
+        # Send a follow-up message
+        await message.channel.send(f'Added to queue {song_name}')
+
+    #handle and play song
+    async def play_song_on_event(self, message: discord.Message, song_input):
+        #check if bot is in voice channel and join if not
+        voice = message.guild.voice_client
+        
+       
+        if voice and voice.is_playing():
+            await self.handle_queue_on_event(message, song_input)
+            await message.channel.send("Music is already playing.Added to queue.")
+            return
+        #play music
+        directory_path = os.path.join(self.main_script_dir, 'songs')
+        
+        #start of download
+        # Remove the "&list" part of the url if it exists
+        song_input = self.remove_list_from_url(song_input)
+        #handle youtube url
+        song_name = self.download_audio(song_input)
+        # Get the full file path for the song in the 'song' folder
+
+        voice = message.guild.voice_client
+        try:
+
+            song_path = os.path.join(directory_path, song_name + '.mp3')
+            source = FFmpegPCMAudio(song_path)
+            voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next_on_event(message)))
+
+            # Add the song to the queue
+            self.add_to_queue(message.guild.id, song_name)
+            await message.channel.send('**Now playing:** {}'.format(song_name))
+        except Exception as e:
+            await message.channel.send(f"An error occurred while playing the audio: {e}")
+
+    async def play_random_on_event(self, message: discord.Message):
+        # Specify the directory path where you want to pick a random file
+        directory_path = os.path.join(self.main_script_dir, 'songs')
+        # Get a list of all files in the directory
+        all_files = os.listdir(directory_path)
+
+        # Filter out only the files (excluding directories)
+        files = [file for file in all_files if os.path.isfile(os.path.join(directory_path, file))]
+
+        # Check if there are any files in the directory
+        if files:
+            # Pick a random file from the list of files
+            random_file = random.choice(files)
+        # Get filename without extension
+        filename = os.path.splitext(random_file)[0]
+        # Play the song
+        await self.play_song(message, filename)
+    async def search_and_play(self, interaction: discord.Interaction, song_input):
+        # Search for the video
+            videosSearch = VideosSearch(song_input, limit = 5) #song
+            block_send ='🕑 **Searching...**\n'
+            # Check if there are any results
+            if not videosSearch.result():
+                return
+            # Call the result() method to get the search results
+            results = videosSearch.result()
+            i = 0
+            for video in results['result']:
+                self.video_list.append(video['link'])
+                title = video['title']
+                length = video['duration']
+                block_send += f'{self.emoji_list[i]} {length}|{title} \n'
+                i += 1
+            message = await interaction.followup.send(block_send)
+            for i in range(5):
+                await message.add_reaction(self.emoji_list[i])
+
+            # Wait for the user to make a choice
+                        
     async def play_random(self, interaction: discord.Interaction):
         # Specify the directory path where you want to pick a random file
-        directory_path = 'C:\\Users\\Windows\\PycharmProjects\\youtubeBot\\song'
-
+        directory_path = os.path.join(self.main_script_dir, 'songs')
         # Get a list of all files in the directory
         all_files = os.listdir(directory_path)
 
@@ -176,10 +321,11 @@ class play_control(commands.Cog):
         if interaction.guild.id in self.queues:
             print(len(queue))
             song_name = queue[0]
-            song_path = os.path.join('song', song_name + '.mp3')
+            directory_path = os.path.join(self.main_script_dir, 'songs')
+            song_path = os.path.join(directory_path, song_name + '.mp3')
             source = FFmpegPCMAudio(song_path)
             voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next(interaction)))
-            await interaction.followup.send(f"Now playing: {queue[0]}")
+            await interaction.followup.send(f"**Now playing:** {queue[0]}")
 
         else:
             await interaction.followup.send("Queue is empty. Leaving voice channel.")
@@ -187,11 +333,17 @@ class play_control(commands.Cog):
     
     #handle and add to queue
     async def handle_queue(self, interaction: discord.Interaction, song_input):
+        directory_path = os.path.join(self.main_script_dir, 'songs')
+        song_path = os.path.join(directory_path, song_input + '.mp3')
         
         if not song_input.startswith("https://"):
+            if os.path.exists(song_path):     
             #handle local file
-            self.add_to_queue(interaction.guild.id, song_input)
-            await interaction.followup.send(f'Added to queue {song_input}')
+                self.add_to_queue(interaction.guild.id, song_input)
+                await interaction.followup.send(f'Added to queue {song_input}')
+                return
+            #if not exists send message
+            await self.search_and_play(interaction, song_input)
             return
         # Remove the "&list" part of the url if it exists
         song_input = self.remove_list_from_url(song_input)
@@ -199,6 +351,7 @@ class play_control(commands.Cog):
         self.add_to_queue(interaction.guild.id, song_name)
         # Send a follow-up message
         await interaction.followup.send(f'Added to queue {song_name}')
+
     #handle and play song
     async def play_song(self, interaction: discord.Interaction, song_input):
         #check if bot is in voice channel and join if not
@@ -213,39 +366,60 @@ class play_control(commands.Cog):
                 voice = await channel.connect()
        
         if voice and voice.is_playing():
-           
             await self.handle_queue(interaction, song_input)
             await interaction.followup.send("Music is already playing.Added to queue.")
             return
         #play music
         voice_channel = interaction.user.voice.channel
+        directory_path = os.path.join(self.main_script_dir, 'songs')
         if not song_input.startswith("https://"):
             #handle local file
             voice = interaction.guild.voice_client
-            song_path = os.path.join('song', song_input + '.mp3')
+            song_path = os.path.join(directory_path, song_input + '.mp3')
+            #check if song exists
+            if os.path.exists(song_path):
+                #if exists play
+                source = FFmpegPCMAudio(song_path)
+
+                voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next(interaction)))
+
+                #add to queue
+                self.add_to_queue(interaction.guild.id, song_input)
+                await interaction.followup.send('**Now playing:** {}'.format(song_input))
+
+                return
+            #if not exists call search and play
+            await self.search_and_play(interaction, song_input)
+            return
+        #start of download
+        # Remove the "&list" part of the url if it exists
+        song_input = self.remove_list_from_url(song_input)
+        #handle youtube url
+        song_name = self.download_audio(song_input)
+        # Get the full file path for the song in the 'song' folder
+
+        voice = interaction.guild.voice_client
+        try:
+
+            song_path = os.path.join(directory_path, song_name + '.mp3')
             source = FFmpegPCMAudio(song_path)
             voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next(interaction)))
-            #add to queue
-            self.add_to_queue(interaction.guild.id, song_input)
-            await interaction.followup.send('**Now playing:** {}'.format(song_input))
-        else:
-            # Remove the "&list" part of the url if it exists
-            song_input = self.remove_list_from_url(song_input)
-            #handle youtube url
-            song_name = self.download_audio(song_input)
-            # Get the full file path for the song in the 'song' folder
-            song_path = os.path.join('song', song_name + '.mp3')
-            voice = interaction.guild.voice_client
-            try:
-                source = FFmpegPCMAudio(song_path)
-                voice.play(source, after=lambda x: self.client.loop.create_task(self.play_next(interaction)))
-                # Add the song to the queue
-                self.add_to_queue(interaction.guild.id, song_name)
-                await interaction.followup.send('**Now playing:** {}'.format(song_name))
-            except Exception as e:
-                await interaction.response.send_message(f"An error occurred while playing the audio: {e}")
+
+            # Add the song to the queue
+            self.add_to_queue(interaction.guild.id, song_name)
+            await interaction.followup.send('**Now playing:** {}'.format(song_name))
+        except Exception as e:
+            await interaction.response.send_message(f"An error occurred while playing the audio: {e}")
     
-    
+    @app_commands.command(name="search", description="search youtube")
+    async def search(self, interaction: discord.Interaction, song_input: str, num_songs: int):
+        await interaction.response.defer()
+        search = Search(song_input)
+        if not search.results:
+            await interaction.followup.send("No results found.")
+            return
+        for i in range(num_songs):
+            await interaction.followup.send(f"{i+1}. {search.results[i].watch_url}")
 
     @app_commands.command(name="show_queue", description="Show the queue")
     async def show_queue(self, interaction: discord.Interaction):
@@ -272,7 +446,7 @@ class play_control(commands.Cog):
     @app_commands.command(name="list", description="List all downloaded songs")
     async def list(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        directory = 'C:\\Users\\Windows\\PycharmProjects\\youtubeBot\\song'
+        directory = 'C:\\Users\\Windows\\PycharmProjects\\youtubeBot\\songs'
 
         # Get all file names in the directory
         files = os.listdir(directory)
@@ -379,6 +553,8 @@ class play_control(commands.Cog):
     @app_commands.command(name="play", description="PLay a song")
     async def play(self, interaction: discord.Interaction, song_input: str):
         await interaction.response.defer()
+        self.video_list = []
+        # Play the song
         await self.play_song(interaction, song_input)
         
     @app_commands.command(name="queue", description="Add a song to the queue")
