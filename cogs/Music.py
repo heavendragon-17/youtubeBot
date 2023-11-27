@@ -1,4 +1,4 @@
-from typing import Any
+
 import discord
 from pytube import YouTube
 from pytube import Search
@@ -170,7 +170,7 @@ class play_control(commands.Cog):
             self.add_to_queue_start(guild_id, song_name)
 
         if True == self.loop_random_flag:
-            await self.play_random(message)
+            await self.play_random_on_event(message)
             return
         # check if the queue is emty
         if 0 == len(queue):
@@ -251,7 +251,7 @@ class play_control(commands.Cog):
         # Get filename without extension
         filename = os.path.splitext(random_file)[0]
         # Play the song
-        await self.play_song(message, filename)
+        await self.play_song_on_event(message, filename)
     async def search_and_play(self, interaction: discord.Interaction, song_input):
         # Search for the video
             videosSearch = VideosSearch(song_input, limit = 5) #song
